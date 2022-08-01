@@ -1,6 +1,6 @@
 {
   "name": "json-schema-walker",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "description": "A system that visits all schema objects in a JSON Schema document and makes callbacks before visiting all of the current schema object's subschemas.",
   "types": "dist/mjs/index.d.ts",
   "files": [
