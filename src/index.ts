@@ -70,8 +70,7 @@ export class Walker<T extends InputSchema = InputSchema> {
     this.rootSchema = cloneSchema ? clone(schema) : schema;
     if (dereference) {
       const parser = new RefParser();
-      this.rootSchema = (await parser.dereference(schema, dereferenceOptions || {})) as T;
-      this.rootSchema = handleRootReference<T>(this.rootSchema);
+      this.rootSchema = (await parser.dereference(handleRootReference(schema), dereferenceOptions || {})) as T;
     }
   };
 
