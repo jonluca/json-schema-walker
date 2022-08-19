@@ -17,7 +17,7 @@ type ProcessorFunctionInternal = (schema: ISubSchema, keyword: string | number) 
 
 type IVocabulary = Record<string, any>;
 type ISubSchema = Record<string, any>;
-interface Options<T extends InputSchema> {
+interface Options {
   cloneSchema?: boolean;
   dereference?: boolean;
   dereferenceOptions?: $RefParser.Options;
@@ -65,7 +65,7 @@ export class Walker<T extends InputSchema = InputSchema> {
     this.initVocabulary();
   }
 
-  loadSchema = async (schema: T, options?: Options<T>) => {
+  loadSchema = async (schema: T, options?: Options) => {
     const { cloneSchema = true, dereference = false, dereferenceOptions } = options || {};
     this.rootSchema = cloneSchema ? clone(schema) : schema;
     if (dereference) {
@@ -85,7 +85,7 @@ export class Walker<T extends InputSchema = InputSchema> {
 
   private cleanupVisited = (schema: ISubSchema) => {
     for (const entry of Object.values(schema)) {
-      if (typeof entry === "object" && null !== entry && entry[visited]) {
+      if (entry && typeof entry === "object" && entry[visited]) {
         delete entry[visited];
         this.cleanupVisited(entry);
       }
@@ -120,7 +120,7 @@ export class Walker<T extends InputSchema = InputSchema> {
 
   // These are the processors
   private processSchemaKey = (schema: ISubSchema, keyword: string) => {
-    if (typeof schema[keyword] !== "object") {
+    if (!schema[keyword] || typeof schema[keyword] !== "object") {
       return;
     }
     const processorFunction = this.vocabulary[keyword];
@@ -132,14 +132,16 @@ export class Walker<T extends InputSchema = InputSchema> {
   };
   private processObjectOfSchemas = (schema: ISubSchema, keyword: string) => {
     for (const prop of Object.getOwnPropertyNames(schema[keyword])) {
-      if (typeof schema[keyword][prop] === "object") {
+      const schemaElem = schema[keyword][prop];
+      if (typeof schemaElem === "object" && schemaElem) {
         this.applyUserProcessor(schema[keyword], prop);
       }
     }
   };
   private processArrayOfSchemas = (schema: ISubSchema, keyword: string) => {
     for (const prop of Object.getOwnPropertyNames(schema[keyword])) {
-      if (typeof schema[keyword][prop] === "object") {
+      const schemaElem = schema[keyword][prop];
+      if (schemaElem && typeof schemaElem === "object") {
         this.applyUserProcessor(schema[keyword], prop);
       }
     }
