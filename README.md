@@ -42,4 +42,4 @@ Passing the options
 }
 ```
 
-will dereference all non-circular references in your schema
+will dereference all non-circular references in your schema.
