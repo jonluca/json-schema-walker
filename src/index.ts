@@ -85,7 +85,7 @@ export class Walker<T extends InputSchema = InputSchema> {
 
   private cleanupVisited = (schema: ISubSchema) => {
     for (const entry of Object.values(schema)) {
-      if (typeof entry === "object" && entry[visited]) {
+      if (typeof entry === "object" && null !== entry && entry[visited]) {
         delete entry[visited];
         this.cleanupVisited(entry);
       }
