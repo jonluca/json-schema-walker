@@ -2,20 +2,13 @@
   "name": "json-schema-walker",
   "version": "0.0.0-development",
   "description": "A system that visits all schema objects in a JSON Schema document and makes callbacks before visiting all of the current schema object's subschemas.",
-  "types": "dist/mjs/index.d.ts",
+  "types": "dist/index.d.ts",
   "files": [
     "dist"
   ],
-  "main": "dist/cjs/index.js",
-  "module": "dist/mjs/index.js",
-  "exports": {
-    ".": {
-      "import": "./dist/mjs/index.js",
-      "require": "./dist/cjs/index.js"
-    }
-  },
+  "main": "dist/index.js",
   "scripts": {
-    "build": "rm -fr dist/* && tsc -p tsconfig.json && tsc -p tsconfig-cjs.json && node scripts/fixup.cjs",
+    "build": "rm -fr dist/* && tsc -p tsconfig.json",
     "typecheck": "tsc --noEmit"
   },
   "repository": {
