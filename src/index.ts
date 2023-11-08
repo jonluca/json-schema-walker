@@ -1,9 +1,9 @@
-import type { JSONSchema } from "@apidevtools/json-schema-ref-parser";
 import clone from "clone";
+import type { JSONSchema } from "@apidevtools/json-schema-ref-parser/dist/lib/types";
 import RefParser from "@apidevtools/json-schema-ref-parser";
-import type $RefParser from "@apidevtools/json-schema-ref-parser";
 import type { JSONSchema4 } from "json-schema";
 import type { JSONSchema6, JSONSchema7 } from "json-schema";
+import type { ParserOptions } from "@apidevtools/json-schema-ref-parser/dist/lib/options";
 
 const visited: unique symbol = Symbol("visited");
 const NEXT_SCHEMA_KEYWORD: unique symbol = Symbol("NEXT_SCHEMA_KEYWORD");
@@ -20,7 +20,7 @@ type ISubSchema = Record<string, any>;
 interface Options {
   cloneSchema?: boolean;
   dereference?: boolean;
-  dereferenceOptions?: $RefParser.Options;
+  dereferenceOptions?: ParserOptions | undefined;
 }
 
 /**
