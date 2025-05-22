@@ -10,11 +10,11 @@ jobs:
     name: Release
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
-      - uses: actions/setup-node@v3
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
-          node-version: 18
-      - run: yarn install --frozen-lockfile
+          node-version: 22
+      - run: yarn install --immutable
       - run: yarn build
       - run: npx semantic-release --branches main
         env:
