@@ -25,20 +25,20 @@
     "node": ">=10"
   },
   "dependencies": {
-    "@apidevtools/json-schema-ref-parser": "^12.0.2",
+    "@apidevtools/json-schema-ref-parser": "^13.0.0",
     "@eslint/compat": "^1.2.9",
-    "@eslint/js": "^9.27.0",
+    "@eslint/js": "^9.28.0",
     "clone": "^2.1.2",
-    "globals": "^16.1.0",
-    "typescript-eslint": "^8.32.1"
+    "globals": "^16.2.0",
+    "typescript-eslint": "^8.33.1"
   },
   "devDependencies": {
     "@types/clone": "^2.1.4",
-    "@typescript-eslint/eslint-plugin": "^8.32.1",
-    "@typescript-eslint/parser": "^8.32.1",
-    "eslint": "^9.27.0",
+    "@typescript-eslint/eslint-plugin": "^8.33.1",
+    "@typescript-eslint/parser": "^8.33.1",
+    "eslint": "^9.28.0",
     "eslint-config-prettier": "^10.1.5",
-    "eslint-plugin-prettier": "^5.4.0",
+    "eslint-plugin-prettier": "^5.4.1",
     "eslint-plugin-unused-imports": "^4.1.4",
     "prettier": "^3.5.3",
     "rimraf": "^6.0.1",
