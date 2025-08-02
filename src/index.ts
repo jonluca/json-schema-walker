@@ -23,6 +23,10 @@ interface Options {
   dereferenceOptions?: ParserOptions | undefined;
 }
 
+interface OptionsSync {
+  cloneSchema?: boolean;
+}
+
 /**
  * This is a hotfix and really only a partial solution as it does not cover all cases.
  *
@@ -74,11 +78,25 @@ export class Walker<T extends InputSchema = InputSchema> {
     }
   };
 
+  loadSchemaSync = (schema: T, options?: OptionsSync) => {
+    const { cloneSchema = true } = options || {};
+    this.rootSchema = cloneSchema ? clone(schema) : schema;
+  };
+
   walk = async (processor: ProcessorFunction<T>, vocabulary: IVocabulary) => {
     this.vocabulary = vocabulary ?? this.vocabularies.DRAFT_07;
     this.walker = processor;
     this.walker(this.rootSchema);
     await this.subschemaWalk(this.rootSchema);
+    // clean up the symbols we injected to check for circular references
+    this.cleanupVisited(this.rootSchema);
+  };
+
+  walkSync = (processor: ProcessorFunction<T>, vocabulary: IVocabulary) => {
+    this.vocabulary = vocabulary ?? this.vocabularies.DRAFT_07;
+    this.walker = processor;
+    this.walker(this.rootSchema);
+    this.subschemaWalk(this.rootSchema);
     // clean up the symbols we injected to check for circular references
     this.cleanupVisited(this.rootSchema);
   };
