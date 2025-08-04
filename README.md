@@ -43,3 +43,25 @@ Passing the options
 ```
 
 will dereference all non-circular references in your schema.
+
+## Synchronous API
+
+For cases where you don't need `$ref` resolution, you can use the synchronous methods:
+
+```typescript
+import { Walker } from "json-schema-walker";
+const schema = {
+  // your json schema (without $ref)
+};
+const walker = new Walker<T>();
+walker.loadSchemaSync(schema, {
+  cloneSchema: true, // only option available
+});
+const convertSchema = (schema) => {
+  // do something with the schema properties
+};
+walker.walkSync(convertSchema, walker.vocabularies.DRAFT_07);
+const updatedSchema = walker.rootSchema;
+```
+
+> ⚠️ **Warning**: The synchronous methods (`loadSchemaSync` and `walkSync`) do not support `$ref` resolution. Use the async methods if your schema contains references.
