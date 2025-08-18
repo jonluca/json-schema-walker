@@ -1,4 +1,3 @@
-import clone from "clone";
 import type { JSONSchema } from "@apidevtools/json-schema-ref-parser/dist/lib/types";
 import RefParser from "@apidevtools/json-schema-ref-parser";
 import type { JSONSchema4 } from "json-schema";
@@ -71,7 +70,7 @@ export class Walker<T extends InputSchema = InputSchema> {
 
   loadSchema = async (schema: T, options?: Options) => {
     const { cloneSchema = true, dereference = false, dereferenceOptions } = options || {};
-    this.rootSchema = cloneSchema ? clone(schema) : schema;
+    this.rootSchema = cloneSchema ? structuredClone(schema) : schema;
     if (dereference) {
       const parser = new RefParser();
       this.rootSchema = (await parser.dereference(handleRootReference(schema), dereferenceOptions || {})) as T;
@@ -80,7 +79,7 @@ export class Walker<T extends InputSchema = InputSchema> {
 
   loadSchemaSync = (schema: T, options?: OptionsSync) => {
     const { cloneSchema = true } = options || {};
-    this.rootSchema = cloneSchema ? clone(schema) : schema;
+    this.rootSchema = cloneSchema ? structuredClone(schema) : schema;
   };
 
   walk = async (processor: ProcessorFunction<T>, vocabulary: IVocabulary) => {
