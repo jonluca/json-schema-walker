@@ -8,6 +8,18 @@ const visited: unique symbol = Symbol("visited");
 const NEXT_SCHEMA_KEYWORD: unique symbol = Symbol("NEXT_SCHEMA_KEYWORD");
 const NEXT_LDO_KEYWORD: unique symbol = Symbol("NEXT_LDO_KEYWORD");
 
+const cloneSchemaValue = <T>(value: T): T => {
+  const structuredCloneFn = (
+    globalThis as typeof globalThis & { structuredClone?: <U>(input: U) => U }
+  ).structuredClone;
+
+  if (structuredCloneFn) {
+    return structuredCloneFn(value);
+  }
+
+  return JSON.parse(JSON.stringify(value)) as T;
+};
+
 export type InputSchema = JSONSchema;
 
 export type ProcessorFunction<T> = (schema: T) => void;
@@ -70,7 +82,7 @@ export class Walker<T extends InputSchema = InputSchema> {
 
   loadSchema = async (schema: T, options?: Options) => {
     const { cloneSchema = true, dereference = false, dereferenceOptions } = options || {};
-    this.rootSchema = cloneSchema ? structuredClone(schema) : schema;
+    this.rootSchema = cloneSchema ? cloneSchemaValue(schema) : schema;
     if (dereference) {
       const parser = new $RefParser();
       this.rootSchema = (await parser.dereference(handleRootReference(schema), dereferenceOptions || {})) as T;
@@ -79,7 +91,7 @@ export class Walker<T extends InputSchema = InputSchema> {
 
   loadSchemaSync = (schema: T, options?: OptionsSync) => {
     const { cloneSchema = true } = options || {};
-    this.rootSchema = cloneSchema ? structuredClone(schema) : schema;
+    this.rootSchema = cloneSchema ? cloneSchemaValue(schema) : schema;
   };
 
   walk = async (processor: ProcessorFunction<T>, vocabulary: IVocabulary) => {
