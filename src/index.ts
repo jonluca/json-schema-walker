@@ -4,14 +4,12 @@ import type { JSONSchema4 } from "json-schema";
 import type { JSONSchema6, JSONSchema7 } from "json-schema";
 import type { ParserOptions } from "@apidevtools/json-schema-ref-parser/dist/lib/options";
 
-const visited: unique symbol = Symbol("visited");
 const NEXT_SCHEMA_KEYWORD: unique symbol = Symbol("NEXT_SCHEMA_KEYWORD");
 const NEXT_LDO_KEYWORD: unique symbol = Symbol("NEXT_LDO_KEYWORD");
 
 const cloneSchemaValue = <T>(value: T): T => {
-  const structuredCloneFn = (
-    globalThis as typeof globalThis & { structuredClone?: <U>(input: U) => U }
-  ).structuredClone;
+  const structuredCloneFn = (globalThis as typeof globalThis & { structuredClone?: <U>(input: U) => U })
+    .structuredClone;
 
   if (structuredCloneFn) {
     return structuredCloneFn(value);
@@ -61,8 +59,7 @@ const handleRootReference = <T extends Record<string, any> = Record<string, any>
         const definition = input.definitions[String(definitionName)];
         const definitionExist = definition !== undefined;
         if (definitionExist) {
-          delete input.$ref;
-          return { ...definition, ...input };
+          return { ...definition, definitions: input.definitions };
         }
       }
     }
@@ -75,6 +72,7 @@ export class Walker<T extends InputSchema = InputSchema> {
   vocabulary!: IVocabulary;
   vocabularies!: Record<string, IVocabulary>;
   walker!: ProcessorFunction<T>;
+  private visitedSchemas = new WeakSet<object>();
 
   constructor() {
     this.initVocabulary();
@@ -85,7 +83,7 @@ export class Walker<T extends InputSchema = InputSchema> {
     this.rootSchema = cloneSchema ? cloneSchemaValue(schema) : schema;
     if (dereference) {
       const parser = new $RefParser();
-      this.rootSchema = (await parser.dereference(handleRootReference(schema), dereferenceOptions || {})) as T;
+      this.rootSchema = (await parser.dereference(handleRootReference(this.rootSchema), dereferenceOptions || {})) as T;
     }
   };
 
@@ -97,28 +95,23 @@ export class Walker<T extends InputSchema = InputSchema> {
   walk = async (processor: ProcessorFunction<T>, vocabulary: IVocabulary) => {
     this.vocabulary = vocabulary ?? this.vocabularies.DRAFT_07;
     this.walker = processor;
+    this.visitedSchemas = new WeakSet<object>();
+    if (this.rootSchema && typeof this.rootSchema === "object") {
+      this.visitedSchemas.add(this.rootSchema);
+    }
     this.walker(this.rootSchema);
     await this.subschemaWalk(this.rootSchema);
-    // clean up the symbols we injected to check for circular references
-    this.cleanupVisited(this.rootSchema);
   };
 
   walkSync = (processor: ProcessorFunction<T>, vocabulary: IVocabulary) => {
     this.vocabulary = vocabulary ?? this.vocabularies.DRAFT_07;
     this.walker = processor;
+    this.visitedSchemas = new WeakSet<object>();
+    if (this.rootSchema && typeof this.rootSchema === "object") {
+      this.visitedSchemas.add(this.rootSchema);
+    }
     this.walker(this.rootSchema);
     this.subschemaWalk(this.rootSchema);
-    // clean up the symbols we injected to check for circular references
-    this.cleanupVisited(this.rootSchema);
-  };
-
-  private cleanupVisited = (schema: ISubSchema) => {
-    for (const entry of Object.values(schema)) {
-      if (entry && typeof entry === "object" && entry[visited]) {
-        delete entry[visited];
-        this.cleanupVisited(entry);
-      }
-    }
   };
 
   private isValidSubSchema = (schema: unknown) =>
@@ -129,7 +122,10 @@ export class Walker<T extends InputSchema = InputSchema> {
     if (typeof schemaElement !== "object") {
       return;
     }
-    schemaElement[visited] = true;
+    if (this.visitedSchemas.has(schemaElement)) {
+      return;
+    }
+    this.visitedSchemas.add(schemaElement);
 
     this.walker(schemaElement);
     this.subschemaWalk(schemaElement);
@@ -156,24 +152,17 @@ export class Walker<T extends InputSchema = InputSchema> {
     if (!processorFunction) {
       return;
     }
-    schema[keyword][visited] = true;
     processorFunction(schema, keyword);
   };
   private processObjectOfSchemas = (schema: ISubSchema, keyword: string) => {
     for (const prop of Object.getOwnPropertyNames(schema[keyword])) {
       const schemaElem = schema[keyword][prop];
-      if (typeof schemaElem === "object" && schemaElem) {
+      if (this.isValidSubSchema(schemaElem) && !Array.isArray(schemaElem)) {
         this.applyUserProcessor(schema[keyword], prop);
       }
     }
   };
   private processArrayOfSchemas = (schema: ISubSchema, keyword: string) => {
-    for (const prop of Object.getOwnPropertyNames(schema[keyword])) {
-      const schemaElem = schema[keyword][prop];
-      if (schemaElem && typeof schemaElem === "object") {
-        this.applyUserProcessor(schema[keyword], prop);
-      }
-    }
     for (let i = 0; i < schema[keyword].length; i++) {
       this.applyUserProcessor(schema[keyword], i);
     }
@@ -215,6 +204,7 @@ export class Walker<T extends InputSchema = InputSchema> {
     const DRAFT_04 = {
       properties: this.processObjectOfSchemas,
       patternProperties: this.processObjectOfSchemas,
+      definitions: this.processObjectOfSchemas,
       additionalProperties: this.processSingleSchema,
       dependencies: this.processObjectOfSchemas,
       items: this.processSingleOrArrayOfSchemas,
@@ -246,7 +236,8 @@ export class Walker<T extends InputSchema = InputSchema> {
 
     const DRAFT_06 = {
       ...DRAFT_04,
-      propertyNames: this.processObjectOfSchemas,
+      propertyNames: this.processSingleSchema,
+      contains: this.processSingleSchema,
     } as Record<keyof JSONSchema6, ProcessorFunctionInternal>;
 
     const DRAFT_06_HYPER_LDO = {
