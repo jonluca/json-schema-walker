@@ -9,6 +9,7 @@
   "main": "dist/index.js",
   "scripts": {
     "build": "rimraf dist && tsc",
+    "test": "pnpm build && node test/index.cjs",
     "typecheck": "tsc --noEmit"
   },
   "repository": {

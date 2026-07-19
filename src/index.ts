@@ -4,14 +4,13 @@ import type { JSONSchema4 } from "json-schema";
 import type { JSONSchema6, JSONSchema7 } from "json-schema";
 import type { ParserOptions } from "@apidevtools/json-schema-ref-parser/dist/lib/options";
 
-const visited: unique symbol = Symbol("visited");
 const NEXT_SCHEMA_KEYWORD: unique symbol = Symbol("NEXT_SCHEMA_KEYWORD");
 const NEXT_LDO_KEYWORD: unique symbol = Symbol("NEXT_LDO_KEYWORD");
+const ROOT_REFERENCE_RESULT_KEY = "__jsonSchemaWalkerRoot";
 
 const cloneSchemaValue = <T>(value: T): T => {
-  const structuredCloneFn = (
-    globalThis as typeof globalThis & { structuredClone?: <U>(input: U) => U }
-  ).structuredClone;
+  const structuredCloneFn = (globalThis as typeof globalThis & { structuredClone?: <U>(input: U) => U })
+    .structuredClone;
 
   if (structuredCloneFn) {
     return structuredCloneFn(value);
@@ -38,36 +37,22 @@ export interface OptionsSync {
   cloneSchema?: boolean;
 }
 
-/**
- * This is a hotfix and really only a partial solution as it does not cover all cases.
- *
- * But it's the best we can do until we find or build a better library to handle references.
- *
- * original source https://github.com/asyncapi/modelina/pull/829/files
- */
-const handleRootReference = <T extends Record<string, any> = Record<string, any>>(input: Record<string, any>): T => {
-  //Because of https://github.com/APIDevTools/json-schema-ref-parser/issues/201 the tool cannot handle root references.
-  //This really is a bad patch to fix an underlying problem, but until a full library is available, this is best we can do.
-  const hasRootRef = input.$ref !== undefined;
-  if (hasRootRef) {
-    //When we encounter it, manually try to resolve the reference in the definitions section
-    const hasDefinitionSection = input.definitions !== undefined;
-    if (hasDefinitionSection) {
-      const definitionLink = "#/definitions/";
-      const referenceLink = input.$ref.slice(0, definitionLink.length);
-      const referenceIsLocal = referenceLink === definitionLink;
-      if (referenceIsLocal) {
-        const definitionName = input.$ref.slice(definitionLink.length);
-        const definition = input.definitions[String(definitionName)];
-        const definitionExist = definition !== undefined;
-        if (definitionExist) {
-          delete input.$ref;
-          return { ...definition, ...input };
-        }
-      }
-    }
+const wrapRootReference = (input: Record<string, any>) => {
+  if (
+    typeof input.$ref !== "string" ||
+    !input.$ref.startsWith("#/definitions/") ||
+    !input.definitions ||
+    typeof input.definitions !== "object"
+  ) {
+    return undefined;
   }
-  return input as T;
+
+  // Resolve the root reference through a wrapper so Draft-07 sibling keywords are not merged into
+  // the referenced schema. The definitions remain available to the parser for nested references.
+  return {
+    definitions: input.definitions,
+    [ROOT_REFERENCE_RESULT_KEY]: { $ref: input.$ref },
+  };
 };
 
 export class Walker<T extends InputSchema = InputSchema> {
@@ -75,6 +60,7 @@ export class Walker<T extends InputSchema = InputSchema> {
   vocabulary!: IVocabulary;
   vocabularies!: Record<string, IVocabulary>;
   walker!: ProcessorFunction<T>;
+  private visitedSchemas = new WeakSet<object>();
 
   constructor() {
     this.initVocabulary();
@@ -85,7 +71,11 @@ export class Walker<T extends InputSchema = InputSchema> {
     this.rootSchema = cloneSchema ? cloneSchemaValue(schema) : schema;
     if (dereference) {
       const parser = new $RefParser();
-      this.rootSchema = (await parser.dereference(handleRootReference(schema), dereferenceOptions || {})) as T;
+      const wrappedRoot = wrapRootReference(this.rootSchema as Record<string, any>);
+      const dereferenced = await parser.dereference(wrappedRoot || this.rootSchema, dereferenceOptions || {});
+      this.rootSchema = (
+        wrappedRoot ? (dereferenced as Record<string, any>)[ROOT_REFERENCE_RESULT_KEY] : dereferenced
+      ) as T;
     }
   };
 
@@ -97,28 +87,23 @@ export class Walker<T extends InputSchema = InputSchema> {
   walk = async (processor: ProcessorFunction<T>, vocabulary: IVocabulary) => {
     this.vocabulary = vocabulary ?? this.vocabularies.DRAFT_07;
     this.walker = processor;
+    this.visitedSchemas = new WeakSet<object>();
+    if (this.rootSchema && typeof this.rootSchema === "object") {
+      this.visitedSchemas.add(this.rootSchema);
+    }
     this.walker(this.rootSchema);
     await this.subschemaWalk(this.rootSchema);
-    // clean up the symbols we injected to check for circular references
-    this.cleanupVisited(this.rootSchema);
   };
 
   walkSync = (processor: ProcessorFunction<T>, vocabulary: IVocabulary) => {
     this.vocabulary = vocabulary ?? this.vocabularies.DRAFT_07;
     this.walker = processor;
+    this.visitedSchemas = new WeakSet<object>();
+    if (this.rootSchema && typeof this.rootSchema === "object") {
+      this.visitedSchemas.add(this.rootSchema);
+    }
     this.walker(this.rootSchema);
     this.subschemaWalk(this.rootSchema);
-    // clean up the symbols we injected to check for circular references
-    this.cleanupVisited(this.rootSchema);
-  };
-
-  private cleanupVisited = (schema: ISubSchema) => {
-    for (const entry of Object.values(schema)) {
-      if (entry && typeof entry === "object" && entry[visited]) {
-        delete entry[visited];
-        this.cleanupVisited(entry);
-      }
-    }
   };
 
   private isValidSubSchema = (schema: unknown) =>
@@ -126,10 +111,10 @@ export class Walker<T extends InputSchema = InputSchema> {
 
   private applyUserProcessor = (schema: ISubSchema, key: string | number) => {
     const schemaElement = schema[key];
-    if (typeof schemaElement !== "object") {
+    if (!schemaElement || typeof schemaElement !== "object" || this.visitedSchemas.has(schemaElement)) {
       return;
     }
-    schemaElement[visited] = true;
+    this.visitedSchemas.add(schemaElement);
 
     this.walker(schemaElement);
     this.subschemaWalk(schemaElement);
@@ -156,7 +141,6 @@ export class Walker<T extends InputSchema = InputSchema> {
     if (!processorFunction) {
       return;
     }
-    schema[keyword][visited] = true;
     processorFunction(schema, keyword);
   };
   private processObjectOfSchemas = (schema: ISubSchema, keyword: string) => {
@@ -168,14 +152,15 @@ export class Walker<T extends InputSchema = InputSchema> {
     }
   };
   private processArrayOfSchemas = (schema: ISubSchema, keyword: string) => {
-    for (const prop of Object.getOwnPropertyNames(schema[keyword])) {
-      const schemaElem = schema[keyword][prop];
-      if (schemaElem && typeof schemaElem === "object") {
-        this.applyUserProcessor(schema[keyword], prop);
-      }
-    }
     for (let i = 0; i < schema[keyword].length; i++) {
       this.applyUserProcessor(schema[keyword], i);
+    }
+  };
+  private processDependencies = (schema: ISubSchema, keyword: string) => {
+    for (const prop of Object.getOwnPropertyNames(schema[keyword])) {
+      if (this.isValidSubSchema(schema[keyword][prop])) {
+        this.applyUserProcessor(schema[keyword], prop);
+      }
     }
   };
   private processSingleOrArrayOfSchemas = (schema: ISubSchema, keyword: string) => {
@@ -215,8 +200,9 @@ export class Walker<T extends InputSchema = InputSchema> {
     const DRAFT_04 = {
       properties: this.processObjectOfSchemas,
       patternProperties: this.processObjectOfSchemas,
+      definitions: this.processObjectOfSchemas,
       additionalProperties: this.processSingleSchema,
-      dependencies: this.processObjectOfSchemas,
+      dependencies: this.processDependencies,
       items: this.processSingleOrArrayOfSchemas,
       additionalItems: this.processSingleSchema,
       allOf: this.processArrayOfSchemas,
@@ -246,7 +232,8 @@ export class Walker<T extends InputSchema = InputSchema> {
 
     const DRAFT_06 = {
       ...DRAFT_04,
-      propertyNames: this.processObjectOfSchemas,
+      propertyNames: this.processSingleSchema,
+      contains: this.processSingleSchema,
     } as Record<keyof JSONSchema6, ProcessorFunctionInternal>;
 
     const DRAFT_06_HYPER_LDO = {
