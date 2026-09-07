@@ -9,7 +9,8 @@
   "main": "dist/index.js",
   "scripts": {
     "build": "rimraf dist && tsc",
-    "test": "pnpm build && node test/index.cjs",
+    "test": "pnpm build && pnpm test:types && node test/index.cjs",
+    "test:types": "tsc --project test/tsconfig.json",
     "typecheck": "tsc --noEmit"
   },
   "repository": {
@@ -23,7 +24,7 @@
   "author": "JonLuca DeCaro <jsonwalker@jonlu.ca>",
   "license": "MIT",
   "engines": {
-    "node": ">=17"
+    "node": ">=20"
   },
   "dependencies": {
     "@apidevtools/json-schema-ref-parser": "^15.3.6",

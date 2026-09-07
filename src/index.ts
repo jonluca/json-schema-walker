@@ -1,12 +1,11 @@
-import type { JSONSchema } from "@apidevtools/json-schema-ref-parser/dist/lib/types";
-import { $RefParser } from "@apidevtools/json-schema-ref-parser";
+import type { JSONSchema, ParserOptions } from "@apidevtools/json-schema-ref-parser" with {
+  "resolution-mode": "import",
+};
 import type { JSONSchema4 } from "json-schema";
 import type { JSONSchema6, JSONSchema7 } from "json-schema";
-import type { ParserOptions } from "@apidevtools/json-schema-ref-parser/dist/lib/options";
 
 const NEXT_SCHEMA_KEYWORD: unique symbol = Symbol("NEXT_SCHEMA_KEYWORD");
 const NEXT_LDO_KEYWORD: unique symbol = Symbol("NEXT_LDO_KEYWORD");
-const ROOT_REFERENCE_RESULT_KEY = "__jsonSchemaWalkerRoot";
 
 const cloneSchemaValue = <T>(value: T): T => {
   const structuredCloneFn = (globalThis as typeof globalThis & { structuredClone?: <U>(input: U) => U })
@@ -19,7 +18,7 @@ const cloneSchemaValue = <T>(value: T): T => {
   return JSON.parse(JSON.stringify(value)) as T;
 };
 
-export type InputSchema = JSONSchema;
+export type InputSchema = JSONSchema | boolean;
 
 export type ProcessorFunction<T> = (schema: T) => void;
 
@@ -37,22 +36,36 @@ export interface OptionsSync {
   cloneSchema?: boolean;
 }
 
-const wrapRootReference = (input: Record<string, any>) => {
-  if (
-    typeof input.$ref !== "string" ||
-    !input.$ref.startsWith("#/definitions/") ||
-    !input.definitions ||
-    typeof input.definitions !== "object"
-  ) {
-    return undefined;
-  }
+const getLegacyRootReference = (input: Record<string, any>) => {
+  const legacyDialect =
+    !input.$schema || /^https?:\/\/json-schema\.org\/draft-(?:04|06|07)\/schema#?$/.test(input.$schema);
+  return legacyDialect &&
+    typeof input.$ref === "string" &&
+    input.$ref.startsWith("#/definitions/") &&
+    input.definitions &&
+    typeof input.definitions === "object"
+    ? input.$ref
+    : undefined;
+};
 
-  // Resolve the root reference through a wrapper so Draft-07 sibling keywords are not merged into
-  // the referenced schema. The definitions remain available to the parser for nested references.
-  return {
-    definitions: input.definitions,
-    [ROOT_REFERENCE_RESULT_KEY]: { $ref: input.$ref },
-  };
+const replaceDocumentRoot = (root: unknown, document: object) => {
+  const pending = [root];
+  const visited = new WeakSet<object>();
+  while (pending.length) {
+    const value = pending.pop();
+    if (!value || typeof value !== "object" || visited.has(value)) {
+      continue;
+    }
+    visited.add(value);
+    for (const key of Object.keys(value)) {
+      const object = value as Record<string, unknown>;
+      if (object[key] === document) {
+        object[key] = root;
+      } else {
+        pending.push(object[key]);
+      }
+    }
+  }
 };
 
 export class Walker<T extends InputSchema = InputSchema> {
@@ -69,13 +82,29 @@ export class Walker<T extends InputSchema = InputSchema> {
   loadSchema = async (schema: T, options?: Options) => {
     const { cloneSchema = true, dereference = false, dereferenceOptions } = options || {};
     this.rootSchema = cloneSchema ? cloneSchemaValue(schema) : schema;
-    if (dereference) {
+    if (dereference && typeof this.rootSchema === "object") {
+      const { $RefParser } = await import("@apidevtools/json-schema-ref-parser");
       const parser = new $RefParser();
-      const wrappedRoot = wrapRootReference(this.rootSchema as Record<string, any>);
-      const dereferenced = await parser.dereference(wrappedRoot || this.rootSchema, dereferenceOptions || {});
-      this.rootSchema = (
-        wrappedRoot ? (dereferenced as Record<string, any>)[ROOT_REFERENCE_RESULT_KEY] : dereferenced
-      ) as T;
+      const rootReference = getLegacyRootReference(this.rootSchema as Record<string, any>);
+      if (rootReference) {
+        // Retain the complete document for JSON Pointer lookup, while excluding ignored root siblings
+        // from the referenced schema. A shallow copy also leaves the caller's root $ref intact.
+        const document = { ...this.rootSchema } as Record<string, any>;
+        delete document.$ref;
+        const dereferencedDocument = await parser.dereference(document, dereferenceOptions || {});
+        if (dereferenceOptions?.dereference?.circular === "ignore" && parser.$refs.circular) {
+          // Unresolved circular pointers still need the original document and its definitions.
+          dereferencedDocument.$ref = rootReference;
+          this.rootSchema = dereferencedDocument as T;
+        } else {
+          const root = parser.$refs.get(rootReference);
+          // A nested reference to "#" must point to the selected schema, not its source document.
+          replaceDocumentRoot(root, dereferencedDocument);
+          this.rootSchema = root as T;
+        }
+      } else {
+        this.rootSchema = (await parser.dereference(this.rootSchema, dereferenceOptions || {})) as T;
+      }
     }
   };
 
@@ -84,7 +113,7 @@ export class Walker<T extends InputSchema = InputSchema> {
     this.rootSchema = cloneSchema ? cloneSchemaValue(schema) : schema;
   };
 
-  walk = async (processor: ProcessorFunction<T>, vocabulary: IVocabulary) => {
+  walk = async (processor: ProcessorFunction<T>, vocabulary?: IVocabulary) => {
     this.vocabulary = vocabulary ?? this.vocabularies.DRAFT_07;
     this.walker = processor;
     this.visitedSchemas = new WeakSet<object>();
@@ -95,7 +124,7 @@ export class Walker<T extends InputSchema = InputSchema> {
     await this.subschemaWalk(this.rootSchema);
   };
 
-  walkSync = (processor: ProcessorFunction<T>, vocabulary: IVocabulary) => {
+  walkSync = (processor: ProcessorFunction<T>, vocabulary?: IVocabulary) => {
     this.vocabulary = vocabulary ?? this.vocabularies.DRAFT_07;
     this.walker = processor;
     this.visitedSchemas = new WeakSet<object>();
@@ -107,11 +136,18 @@ export class Walker<T extends InputSchema = InputSchema> {
   };
 
   private isValidSubSchema = (schema: unknown) =>
-    (schema instanceof Object && !Array.isArray(schema)) || typeof schema === "boolean";
+    (schema !== null && typeof schema === "object" && !Array.isArray(schema)) || typeof schema === "boolean";
 
   private applyUserProcessor = (schema: ISubSchema, key: string | number) => {
     const schemaElement = schema[key];
-    if (!schemaElement || typeof schemaElement !== "object" || this.visitedSchemas.has(schemaElement)) {
+    if (!this.isValidSubSchema(schemaElement)) {
+      return;
+    }
+    if (typeof schemaElement === "boolean") {
+      this.walker(schemaElement as T);
+      return;
+    }
+    if (this.visitedSchemas.has(schemaElement)) {
       return;
     }
     this.visitedSchemas.add(schemaElement);
@@ -120,8 +156,11 @@ export class Walker<T extends InputSchema = InputSchema> {
     this.subschemaWalk(schemaElement);
   };
 
-  private subschemaWalk = (schema: ISubSchema) => {
-    for (const keyword in schema) {
+  private subschemaWalk = (schema: InputSchema) => {
+    if (typeof schema === "boolean") {
+      return;
+    }
+    for (const keyword of Object.keys(schema)) {
       try {
         this.processSchemaKey(schema, keyword);
       } catch (e) {
@@ -134,24 +173,28 @@ export class Walker<T extends InputSchema = InputSchema> {
 
   // These are the processors
   private processSchemaKey = (schema: ISubSchema, keyword: string) => {
-    if (!schema[keyword] || typeof schema[keyword] !== "object") {
+    const value = schema[keyword];
+    if (value === null || (typeof value !== "object" && typeof value !== "boolean")) {
+      return;
+    }
+    if (!Object.hasOwn(this.vocabulary, keyword)) {
       return;
     }
     const processorFunction = this.vocabulary[keyword];
-    if (!processorFunction) {
+    if (typeof processorFunction !== "function") {
       return;
     }
     processorFunction(schema, keyword);
   };
   private processObjectOfSchemas = (schema: ISubSchema, keyword: string) => {
     for (const prop of Object.getOwnPropertyNames(schema[keyword])) {
-      const schemaElem = schema[keyword][prop];
-      if (typeof schemaElem === "object" && schemaElem) {
-        this.applyUserProcessor(schema[keyword], prop);
-      }
+      this.applyUserProcessor(schema[keyword], prop);
     }
   };
   private processArrayOfSchemas = (schema: ISubSchema, keyword: string) => {
+    if (!Array.isArray(schema[keyword])) {
+      return;
+    }
     for (let i = 0; i < schema[keyword].length; i++) {
       this.applyUserProcessor(schema[keyword], i);
     }
@@ -181,10 +224,18 @@ export class Walker<T extends InputSchema = InputSchema> {
    */
   private getProcessLinks = (ldoVocabulary: IVocabulary) => {
     return (schema: ISubSchema, keyword: string | number) => {
-      for (const ldo of schema.links) {
-        for (const key in ldo) {
+      if (!Array.isArray(schema[keyword])) {
+        return;
+      }
+      for (const ldo of schema[keyword]) {
+        if (!ldo || typeof ldo !== "object" || Array.isArray(ldo)) {
+          continue;
+        }
+        for (const key of Object.keys(ldo)) {
           try {
-            ldoVocabulary[keyword]?.(schema, key);
+            if (Object.hasOwn(ldoVocabulary, key) && typeof ldoVocabulary[key] === "function") {
+              ldoVocabulary[key](ldo, key);
+            }
           } catch (e) {
             if (e !== NEXT_LDO_KEYWORD) {
               throw e;
@@ -209,9 +260,6 @@ export class Walker<T extends InputSchema = InputSchema> {
       anyOf: this.processArrayOfSchemas,
       oneOf: this.processArrayOfSchemas,
       not: this.processSingleSchema,
-      if: this.processSingleSchema,
-      then: this.processSingleSchema,
-      else: this.processSingleSchema,
     } as Record<keyof JSONSchema4, ProcessorFunctionInternal>;
 
     /**
@@ -247,7 +295,12 @@ export class Walker<T extends InputSchema = InputSchema> {
       links: this.getProcessLinks(DRAFT_06_HYPER_LDO),
     } as Record<keyof JSONSchema6, ProcessorFunctionInternal>;
 
-    const DRAFT_07 = { ...DRAFT_06 } as Record<keyof JSONSchema7, ProcessorFunctionInternal>;
+    const DRAFT_07 = {
+      ...DRAFT_06,
+      if: this.processSingleSchema,
+      then: this.processSingleSchema,
+      else: this.processSingleSchema,
+    } as Record<keyof JSONSchema7, ProcessorFunctionInternal>;
 
     const DRAFT_07_HYPER_LDO = {
       ...DRAFT_06_HYPER_LDO,

@@ -1,8 +1,8 @@
 {
   "compilerOptions": {
-    "module": "commonjs",
+    "module": "Node16",
     "outDir": "dist",
-    "target": "ESNext",
+    "target": "ES2022",
     "allowJs": true,
     "allowSyntheticDefaultImports": true,
     "declaration": true,
@@ -11,7 +11,7 @@
     "lib": ["es2022"],
     "listEmittedFiles": false,
     "listFiles": false,
-    "moduleResolution": "Bundler",
+    "moduleResolution": "Node16",
     "noFallthroughCasesInSwitch": true,
     "pretty": true,
     "resolveJsonModule": true,

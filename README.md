@@ -2,7 +2,9 @@
 
 Loosely based on [CloudFlare's json schema tools](https://github.com/cloudflare/json-schema-tools/tree/master/workspaces/json-schema-walker)
 
-A system that visits all schema objects in a JSON Schema document and makes callbacks before and/or after visiting all of the current schema object's subschemas.
+A system that visits schemas in a JSON Schema document and makes callbacks before visiting each schema's subschemas.
+
+Requires Node.js 20 or later.
 
 ## Usage
 
@@ -27,6 +29,10 @@ const convertSchema = (schema) => {
 await walker.walk(convertSchema, walker.vocabularies.DRAFT_07);
 const updatedSchema = walker.rootSchema;
 ```
+
+The vocabulary argument defaults to `walker.vocabularies.DRAFT_07`. Callbacks run synchronously in both walking APIs.
+Each schema object is visited once per walk, including when objects are shared or circular. Boolean schemas (`true` and
+`false`) are visited at each schema location, so callbacks that modify objects should first check `typeof schema === "object"`.
 
 ## Circular references
 
